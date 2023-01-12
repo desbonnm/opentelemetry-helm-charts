@@ -6,7 +6,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 # Valid values are "daemonset", "deployment", and "statefulset".
-mode: ""
+mode: deployment
 
 # Handles basic configuration of components that
 # also require k8s modifications to work correctly.
@@ -61,47 +61,47 @@ configMap:
 # Supports templating. To escape existing instances of {{ }}, use {{` <original content> `}}.
 # For example, {{ REDACTED_EMAIL }} becomes {{` {{ REDACTED_EMAIL }} `}}.
 config:
-  exporters:
-    logging: {}
-  extensions:
-    # The health_check extension is mandatory for this chart.
-    # Without the health_check extension the collector will fail the readiness and liveliness probes.
-    # The health_check extension can be modified, but should never be removed.
-    health_check: {}
-    memory_ballast: {}
-  processors:
-    batch: {}
-    # If set to null, will be overridden with values based on k8s resource limits
-    memory_limiter: null
   receivers:
-    jaeger:
-      protocols:
-        grpc:
-          endpoint: 0.0.0.0:14250
-        thrift_http:
-          endpoint: 0.0.0.0:14268
-        thrift_compact:
-          endpoint: 0.0.0.0:6831
     otlp:
       protocols:
         grpc:
           endpoint: 0.0.0.0:4317
         http:
           endpoint: 0.0.0.0:4318
-    prometheus:
-      config:
-        scrape_configs:
-          - job_name: opentelemetry-collector
-            scrape_interval: 10s
-            static_configs:
-              - targets:
-                  - ${MY_POD_IP}:8888
-    zipkin:
-      endpoint: 0.0.0.0:9411
-  service:
-    telemetry:
+    vcenter:
+      endpoint: https://10.7.220.20
+      tls:
+        insecure: true
+      username: ${env:VCENTER_USER}
+      password: ${env:VCENTER_PASSWORD}
+      collection_interval: 5m
       metrics:
-        address: 0.0.0.0:8888
+  exporters:
+    logging:
+        verbosity: normal # detailed
+#    file:
+#      path: /metrics/metrics.log
+
+    otlp/elastic:
+      # Elastic APM server https endpoint without the "https://" prefix
+      endpoint: "e6228f5dd4174ddf8cd1e18054cca07b.apm.us-central1.gcp.cloud.es.io:443"
+      headers:
+        # Elastic APM Server secret token
+        Authorization: "${env:ELASTIC_AUTH_TOKEN}"
+
+  processors:
+    batch:
+    # If set to null, will be overridden with values based on k8s resource limits
+    memory_limiter: null
+
+  extensions:
+    # The health_check extension is mandatory for this chart.
+    # Without the health_check extension the collector will fail the readiness and liveliness probes.
+    # The health_check extension can be modified, but should never be removed.
+    health_check: {}
+    memory_ballast: {}
+
+  service:
     extensions:
       - health_check
       - memory_ballast
@@ -109,6 +109,7 @@ config:
       logs:
         exporters:
           - logging
+          - otlp/elastic
         processors:
           - memory_limiter
           - batch
@@ -117,22 +118,22 @@ config:
       metrics:
         exporters:
           - logging
+          - otlp/elastic
         processors:
           - memory_limiter
           - batch
         receivers:
           - otlp
-          - prometheus
+          - vcenter
       traces:
         exporters:
           - logging
+          - otlp/elastic
         processors:
           - memory_limiter
           - batch
         receivers:
           - otlp
-          - jaeger
-          - zipkin
 
 image:
   # If you want to use the core image `otel/opentelemetry-collector`, you also need to change `command.name` value to `otelcol`.
@@ -195,7 +196,26 @@ affinity: {}
 # Allows for pod scheduler prioritisation
 priorityClassName: ""
 
-extraEnvs: []
+extraEnvs:
+  - name: ELASTIC_AUTH_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: elastic-token
+        key: token
+        optional: false
+  - name: VCENTER_USER
+    valueFrom:
+      secretKeyRef:
+        name: vcenter-creds
+        key: username
+        optional: false
+  - name: VCENTER_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: vcenter-creds
+        key: password
+        optional: false
+
 extraVolumes: []
 extraVolumeMounts: []
 
@@ -214,25 +234,25 @@ ports:
     hostPort: 4318
     protocol: TCP
   jaeger-compact:
-    enabled: true
+    enabled: false
     containerPort: 6831
     servicePort: 6831
     hostPort: 6831
     protocol: UDP
   jaeger-thrift:
-    enabled: true
+    enabled: false
     containerPort: 14268
     servicePort: 14268
     hostPort: 14268
     protocol: TCP
   jaeger-grpc:
-    enabled: true
+    enabled: false
     containerPort: 14250
     servicePort: 14250
     hostPort: 14250
     protocol: TCP
   zipkin:
-    enabled: true
+    enabled: false
     containerPort: 9411
     servicePort: 9411
     hostPort: 9411
